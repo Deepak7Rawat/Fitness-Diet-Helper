@@ -1,0 +1,275 @@
+{
+  "name": "Personalized Fitness and Diet Plan Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "contextWindowLength": 10
+      },
+      "id": "764bf249-a53f-4a41-b5c2-451d9157f749",
+      "name": "Conversation Memory", 
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "You are a friendly fitness coach and nutritionist assistant. Your role is to guide users through a comprehensive fitness assessment and create personalized fitness and diet plans.\n\nYour task is to:\n1. When the user greets you (hi, hello, etc.), warmly introduce yourself and explain that you'll help them create a personalized fitness and diet plan\n\n2. Collect information ONE QUESTION AT A TIME in this exact order:\n   - Age\n   - Gender\n   - Weight (in kg)\n   - Height (in cm)\n   - Body-fat percentage (if known - if they don't know, use 0)\n   - Medical conditions (if any - acknowledge and note them)\n   - Diet preference (vegetarian / non-vegetarian / vegan)\n   - Fitness goal (weight loss / gain / maintain / strength)\n   - Time period for the plan (weekly / monthly / yearly)\n   - Workout setting (gym equipment or home only)\n\n3. After collecting ALL 10 pieces of information:\n   a) Use the BMI & BMR Calculator Tool with: age, gender, weight, height, fatPercentage\n   b) Use the Exercise Plan Generator Tool with: goal, equipment, timePeriod, bmi (from calculator), bmr (from calculator)\n   c) Use the Diet Plan Generator Tool with: bmr (from calculator), goal, dietaryPreference, weight, fatPercentage\n\n4. Present the complete plan in organized sections:\n\n**📊 Your Metrics**\n- BMI: [value] ([category])\n- BMR: [value] calories/day\n\n**🏋️ Workout Plan**\nFor each day in the exercise plan, include:\n- Day name and focus area\n- List of exercises with sets/reps/duration\n- For EACH exercise, provide:\n  • **Description**: How to perform the exercise\n  • **Form Tips**: Key points for proper technique and safety\n  • **Visual Demo**: A textual description of what an image demonstration would show (e.g., \"Side view of person in plank position, body straight from head to heels, elbows under shoulders\")\n  • **Video Tutorial**: A YouTube link for proper technique (use format: https://www.youtube.com/results?search_query=[exercise+name]+proper+form+tutorial)\n\n**🍽️ Diet Plan**\n- Daily calorie target: [calories]\n- Macro breakdown: Protein [X]g, Carbs [X]g, Fats [X]g\n- Daily meals with:\n  • Breakfast: [meal] - Portion size, macros\n  • Mid-morning snack: [snack] - Portion size, macros\n  • Lunch: [meal] - Portion size, macros\n  • Evening snack: [snack] - Portion size, macros\n  • Dinner: [meal] - Portion size, macros\n  • Post-dinner: [optional] - Portion size, macros\n- Sample foods or recipes based on their diet preference\n- Hydration recommendation\n\n5. End with:\n\"Do you want me to adjust anything — intensity, time, food, or swap exercises?\"\n\n**⚠️ Safety Note**: This is for guidance only. If you have any health issues or concerns, please consult a medical or fitness professional before starting.\n\nIMPORTANT RULES:\n- Ask ONLY ONE question at a time\n- Wait for the user's answer before asking the next question\n- Be encouraging, supportive, and friendly throughout\n- Use the exact question order listed above\n- After collecting all data, call ALL THREE tools before presenting the plan\n- Make the final presentation comprehensive, well-organized, and easy to follow\n- Include detailed exercise descriptions, form tips, visual descriptions, and video links for each exercise"
+        }
+      },
+      "id": "e6d0f14f-bafe-4f42-b641-ca4ae23abf50",
+      "name": "Fitness Chatbot Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        480,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Calculates BMI (Body Mass Index) and BMR (Basal Metabolic Rate) based on user metrics. Input: age, gender, weight (kg), height (cm), fatPercentage. Returns: BMI, BMR, BMI category, and health insights.",
+        "jsCode": "// Get input from AI - prioritize $input.item.json.input\nlet age, gender, weight, height, fatPercentage;\nlet inputStr;\n\n// Check $input.item.json.input first (AI agent passes data here)\nif ($input.item && $input.item.json && $input.item.json.input) {\n  inputStr = $input.item.json.input;\n} else if ($input.params && $input.params.input) {\n  inputStr = $input.params.input;\n}\n\n// If we have an input string, parse it\nif (inputStr) {\n  // Try JSON parse first\n  try {\n    const parsed = JSON.parse(inputStr);\n    age = parseInt(parsed.age);\n    gender = (parsed.gender || '').toLowerCase();\n    weight = parseFloat(parsed.weight);\n    height = parseFloat(parsed.height);\n    fatPercentage = parseFloat(parsed.fatPercentage);\n  } catch (e) {\n    // Parse key-value pairs (supports both : and = separators)\n    const pairs = inputStr.split(',').map(s => s.trim());\n    const params = {};\n    \n    for (const pair of pairs) {\n      if (pair.includes(':')) {\n        const [key, value] = pair.split(':').map(s => s.trim());\n        params[key] = value;\n      } else if (pair.includes('=')) {\n        const [key, value] = pair.split('=').map(s => s.trim());\n        params[key] = value;\n      }\n    }\n    \n    age = parseInt(params.age);\n    gender = (params.gender || '').toLowerCase();\n    weight = parseFloat(params.weight);\n    height = parseFloat(params.height);\n    fatPercentage = parseFloat(params.fatPercentage);\n  }\n} else if ($input.params && $input.params.age) {\n  // Direct parameter access (fallback)\n  age = parseInt($input.params.age);\n  gender = ($input.params.gender || '').toLowerCase();\n  weight = parseFloat($input.params.weight);\n  height = parseFloat($input.params.height);\n  fatPercentage = parseFloat($input.params.fatPercentage);\n} else {\n  return JSON.stringify({ error: 'No input provided' });\n}\n\n// Validate\nif (!age || !gender || !weight || !height) {\n  return JSON.stringify({ \n    error: 'Missing required parameters',\n    received: { age, gender, weight, height, fatPercentage },\n    debug: JSON.stringify($input)\n  });\n}\n\n// Calculate BMI\nconst heightInMeters = height / 100;\nconst bmi = weight / (heightInMeters * heightInMeters);\n\n// BMI category\nlet bmiCategory;\nif (bmi < 18.5) bmiCategory = 'Underweight';\nelse if (bmi < 25) bmiCategory = 'Normal weight';\nelse if (bmi < 30) bmiCategory = 'Overweight';\nelse bmiCategory = 'Obese';\n\n// Calculate BMR\nlet bmr;\nif (gender === 'male' || gender === 'm') {\n  bmr = (10 * weight) + (6.25 * height) - (5 * age) + 5;\n} else {\n  bmr = (10 * weight) + (6.25 * height) - (5 * age) - 161;\n}\n\nconst result = {\n  bmi: bmi.toFixed(2),\n  bmiCategory: bmiCategory,\n  bmr: bmr.toFixed(0),\n  fatPercentage: fatPercentage || 0,\n  healthInsights: `Your BMI is ${bmi.toFixed(2)} (${bmiCategory}). Your BMR is ${bmr.toFixed(0)} calories/day.`\n};\n\nreturn JSON.stringify(result);"
+      },
+      "id": "a2880b29-0d1d-4f13-913e-40abe47cd569",
+      "name": "BMI & BMR Calculator Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        480,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Generates a comprehensive exercise schedule based on user goals and equipment availability. Input: goal (weight gain/loss/maintain), equipment (gym/home), timePeriod (weekly/monthly/yearly), bmi, bmr. Returns: detailed exercise plan with specific exercises for each day.",
+        "jsCode": "// Get input from AI - prioritize $input.item.json.input\nlet goal, equipment, timePeriod, bmi, bmr;\nlet inputStr;\n\n// Check $input.item.json.input first (AI agent passes data here)\nif ($input.item && $input.item.json && $input.item.json.input) {\n  inputStr = $input.item.json.input;\n} else if ($input.params && $input.params.input) {\n  inputStr = $input.params.input;\n}\n\n// If we have an input string, parse it\nif (inputStr) {\n  // Try JSON parse first\n  try {\n    const parsed = JSON.parse(inputStr);\n    goal = (parsed.goal || '').toLowerCase();\n    equipment = (parsed.equipment || '').toLowerCase();\n    timePeriod = (parsed.timePeriod || '').toLowerCase();\n    bmi = parseFloat(parsed.bmi) || 0;\n    bmr = parseFloat(parsed.bmr) || 0;\n  } catch (e) {\n    // Parse key-value pairs (supports both : and = separators)\n    const pairs = inputStr.split(',').map(s => s.trim());\n    const params = {};\n    \n    for (const pair of pairs) {\n      if (pair.includes(':')) {\n        const [key, value] = pair.split(':').map(s => s.trim());\n        params[key] = value;\n      } else if (pair.includes('=')) {\n        const [key, value] = pair.split('=').map(s => s.trim());\n        params[key] = value;\n      }\n    }\n    \n    goal = (params.goal || '').toLowerCase();\n    equipment = (params.equipment || '').toLowerCase();\n    timePeriod = (params.timePeriod || '').toLowerCase();\n    bmi = parseFloat(params.bmi) || 0;\n    bmr = parseFloat(params.bmr) || 0;\n  }\n} else if ($input.params && $input.params.goal) {\n  // Direct parameter access (fallback)\n  goal = ($input.params.goal || '').toLowerCase();\n  equipment = ($input.params.equipment || '').toLowerCase();\n  timePeriod = ($input.params.timePeriod || '').toLowerCase();\n  bmi = parseFloat($input.params.bmi) || 0;\n  bmr = parseFloat($input.params.bmr) || 0;\n} else {\n  return JSON.stringify({ error: 'No input provided' });\n}\n\n// Validate\nif (!goal || !equipment || !timePeriod) {\n  return JSON.stringify({ \n    error: 'Missing required parameters',\n    received: { goal, equipment, timePeriod, bmi, bmr },\n    debug: JSON.stringify($input)\n  });\n}\n\nconst hasGym = equipment.includes('gym');\n\n// Exercise library (keeping existing structure)\nconst exerciseLibrary = {\n  weightLoss: {\n    gym: [\n      { day: 'Monday', focus: 'Cardio & Core', exercises: ['Treadmill Running - 30 min', 'Cycling - 20 min', 'Plank - 3x60s', 'Russian Twists - 3x20'] },\n      { day: 'Tuesday', focus: 'Upper Body', exercises: ['Bench Press - 3x12', 'Lat Pulldown - 3x12', 'Shoulder Press - 3x12', 'Bicep Curls - 3x15'] },\n      { day: 'Wednesday', focus: 'HIIT Cardio', exercises: ['Burpees - 4x15', 'Jump Rope - 5x2min', 'Mountain Climbers - 4x20', 'Box Jumps - 3x12'] },\n      { day: 'Thursday', focus: 'Lower Body', exercises: ['Squats - 4x15', 'Leg Press - 3x15', 'Lunges - 3x12 each', 'Calf Raises - 3x20'] },\n      { day: 'Friday', focus: 'Full Body Circuit', exercises: ['Deadlifts - 3x12', 'Pull-ups - 3x10', 'Dumbbell Rows - 3x12', 'Leg Curls - 3x15'] },\n      { day: 'Saturday', focus: 'Active Recovery', exercises: ['Light Jogging - 20 min', 'Stretching - 15 min', 'Yoga - 30 min'] },\n      { day: 'Sunday', focus: 'Rest', exercises: ['Complete rest or light walking'] }\n    ],\n    home: [\n      { day: 'Monday', focus: 'Cardio & Core', exercises: ['Jumping Jacks - 5x50', 'High Knees - 5x1min', 'Plank - 3x60s', 'Bicycle Crunches - 3x25'] },\n      { day: 'Tuesday', focus: 'Upper Body', exercises: ['Push-ups - 4x15', 'Pike Push-ups - 3x12', 'Tricep Dips - 3x15', 'Diamond Push-ups - 3x10'] },\n      { day: 'Wednesday', focus: 'HIIT', exercises: ['Burpees - 5x15', 'Mountain Climbers - 5x30', 'Jump Squats - 4x15', 'High Knees - 5x1min'] },\n      { day: 'Thursday', focus: 'Lower Body', exercises: ['Bodyweight Squats - 4x25', 'Lunges - 4x15 each', 'Glute Bridges - 4x20', 'Wall Sit - 3x60s'] },\n      { day: 'Friday', focus: 'Full Body', exercises: ['Burpees - 4x12', 'Push-ups - 3x15', 'Squats - 4x20', 'Plank to Push-up - 3x10'] },\n      { day: 'Saturday', focus: 'Active Recovery', exercises: ['Brisk Walking - 30 min', 'Stretching - 20 min', 'Light Yoga - 30 min'] },\n      { day: 'Sunday', focus: 'Rest', exercises: ['Complete rest'] }\n    ]\n  },\n  weightGain: {\n    gym: [\n      { day: 'Monday', focus: 'Chest & Triceps', exercises: ['Bench Press - 4x8', 'Incline Dumbbell Press - 4x10', 'Cable Flyes - 3x12', 'Tricep Pushdowns - 4x12'] },\n      { day: 'Tuesday', focus: 'Back & Biceps', exercises: ['Deadlifts - 4x6', 'Barbell Rows - 4x8', 'Lat Pulldown - 4x10', 'Barbell Curls - 4x10'] },\n      { day: 'Wednesday', focus: 'Legs', exercises: ['Squats - 5x8', 'Leg Press - 4x12', 'Romanian Deadlifts - 4x10', 'Leg Curls - 3x12'] },\n      { day: 'Thursday', focus: 'Shoulders & Abs', exercises: ['Military Press - 4x8', 'Lateral Raises - 4x12', 'Front Raises - 3x12', 'Hanging Leg Raises - 3x15'] },\n      { day: 'Friday', focus: 'Arms & Core', exercises: ['Close-grip Bench - 4x10', 'Preacher Curls - 4x10', 'Skull Crushers - 3x12', 'Plank - 3x90s'] },\n      { day: 'Saturday', focus: 'Full Body Power', exercises: ['Power Cleans - 4x6', 'Front Squats - 4x8', 'Pull-ups - 4x8', 'Dips - 4x10'] },\n      { day: 'Sunday', focus: 'Rest', exercises: ['Complete rest'] }\n    ],\n    home: [\n      { day: 'Monday', focus: 'Push Exercises', exercises: ['Push-ups - 5x20', 'Pike Push-ups - 4x15', 'Diamond Push-ups - 4x12', 'Tricep Dips - 4x15'] },\n      { day: 'Tuesday', focus: 'Pull Exercises', exercises: ['Pull-ups - 5x10', 'Chin-ups - 4x8', 'Inverted Rows - 4x15'] },\n      { day: 'Wednesday', focus: 'Legs', exercises: ['Pistol Squats - 4x8 each', 'Bulgarian Split Squats - 4x12 each', 'Jump Squats - 4x15'] },\n      { day: 'Thursday', focus: 'Core', exercises: ['Plank - 4x60s', 'L-sits - 4x20s', 'Hollow Body Hold - 3x45s'] },\n      { day: 'Friday', focus: 'Full Body', exercises: ['Handstand Push-ups - 4x8', 'Archer Push-ups - 4x10 each', 'Pistol Squats - 4x10 each'] },\n      { day: 'Saturday', focus: 'Power', exercises: ['Plyometric Push-ups - 4x12', 'Jump Lunges - 4x12 each', 'Burpees - 4x15'] },\n      { day: 'Sunday', focus: 'Rest', exercises: ['Complete rest'] }\n    ]\n  },\n  maintain: {\n    gym: [\n      { day: 'Monday', focus: 'Upper Body', exercises: ['Bench Press - 3x10', 'Rows - 3x10', 'Shoulder Press - 3x10'] },\n      { day: 'Tuesday', focus: 'Lower Body', exercises: ['Squats - 4x10', 'Deadlifts - 3x8', 'Leg Press - 3x12'] },\n      { day: 'Wednesday', focus: 'Cardio & Core', exercises: ['Treadmill - 25 min', 'Plank - 3x60s', 'Russian Twists - 3x20'] },\n      { day: 'Thursday', focus: 'Full Body', exercises: ['Deadlifts - 3x10', 'Pull-ups - 3x10', 'Dumbbell Press - 3x12'] },\n      { day: 'Friday', focus: 'Active Training', exercises: ['Circuit Training - 30 min', 'Battle Ropes - 3x2min'] },\n      { day: 'Saturday', focus: 'Light Activity', exercises: ['Swimming - 30 min', 'Stretching - 15 min'] },\n      { day: 'Sunday', focus: 'Rest', exercises: ['Rest'] }\n    ],\n    home: [\n      { day: 'Monday', focus: 'Upper Body', exercises: ['Push-ups - 4x15', 'Pike Push-ups - 3x12', 'Tricep Dips - 3x15'] },\n      { day: 'Tuesday', focus: 'Lower Body', exercises: ['Squats - 4x20', 'Lunges - 3x15 each', 'Glute Bridges - 4x15'] },\n      { day: 'Wednesday', focus: 'Cardio', exercises: ['Jumping Jacks - 5x50', 'High Knees - 5x1min', 'Burpees - 4x12'] },\n      { day: 'Thursday', focus: 'Core', exercises: ['Plank - 4x60s', 'Bicycle Crunches - 4x25', 'Leg Raises - 3x15'] },\n      { day: 'Friday', focus: 'Full Body', exercises: ['Burpees - 4x15', 'Push-ups - 3x15', 'Squats - 4x20'] },\n      { day: 'Saturday', focus: 'Recovery', exercises: ['Yoga - 30 min', 'Stretching - 20 min'] },\n      { day: 'Sunday', focus: 'Rest', exercises: ['Rest'] }\n    ]\n  }\n};\n\nlet goalKey = 'maintain';\nif (goal.includes('loss') || goal.includes('lose')) goalKey = 'weightLoss';\nelse if (goal.includes('gain')) goalKey = 'weightGain';\n\nconst equipmentKey = hasGym ? 'gym' : 'home';\nconst weeklyPlan = exerciseLibrary[goalKey][equipmentKey];\n\nlet fullPlan = [];\nif (timePeriod.includes('week')) {\n  fullPlan = weeklyPlan;\n} else if (timePeriod.includes('month')) {\n  for (let week = 1; week <= 4; week++) {\n    weeklyPlan.forEach(day => {\n      fullPlan.push({ week: week, ...day });\n    });\n  }\n} else {\n  for (let month = 1; month <= 12; month++) {\n    fullPlan.push({\n      month: month,\n      plan: 'Follow the weekly schedule',\n      weeklySchedule: weeklyPlan\n    });\n  }\n}\n\nconst result = {\n  goal: goal,\n  equipment: equipment,\n  timePeriod: timePeriod,\n  exercisePlan: fullPlan,\n  notes: `This ${timePeriod} plan is designed for ${goal} using ${equipment}.`\n};\n\nreturn JSON.stringify(result);"
+      },
+      "id": "8cffbc66-89c9-40c7-80de-d59d420c9ac0",
+      "name": "Exercise Plan Generator Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        608,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Generates a personalized daily diet plan based on user metrics and preferences. Input: bmr, goal, dietaryPreference (vegetarian/non-vegetarian), weight, fatPercentage. Returns: detailed meal plan with calorie targets and macros.",
+        "jsCode": "// Get input from AI - prioritize $input.item.json.input\nlet bmr, goal, dietaryPreference, weight, fatPercentage;\nlet inputStr;\n\n// Check $input.item.json.input first (AI agent passes data here)\nif ($input.item && $input.item.json && $input.item.json.input) {\n  inputStr = $input.item.json.input;\n} else if ($input.params && $input.params.input) {\n  inputStr = $input.params.input;\n}\n\n// If we have an input string, parse it\nif (inputStr) {\n  // Try JSON parse first\n  try {\n    const parsed = JSON.parse(inputStr);\n    bmr = parseFloat(parsed.bmr);\n    goal = (parsed.goal || '').toLowerCase();\n    dietaryPreference = (parsed.dietaryPreference || '').toLowerCase();\n    weight = parseFloat(parsed.weight);\n    fatPercentage = parseFloat(parsed.fatPercentage) || 0;\n  } catch (e) {\n    // Parse key-value pairs (supports both : and = separators)\n    const pairs = inputStr.split(',').map(s => s.trim());\n    const params = {};\n    \n    for (const pair of pairs) {\n      if (pair.includes(':')) {\n        const [key, value] = pair.split(':').map(s => s.trim());\n        params[key] = value;\n      } else if (pair.includes('=')) {\n        const [key, value] = pair.split('=').map(s => s.trim());\n        params[key] = value;\n      }\n    }\n    \n    bmr = parseFloat(params.bmr);\n    goal = (params.goal || '').toLowerCase();\n    dietaryPreference = (params.dietaryPreference || '').toLowerCase();\n    weight = parseFloat(params.weight);\n    fatPercentage = parseFloat(params.fatPercentage) || 0;\n  }\n} else if ($input.params && $input.params.bmr) {\n  // Direct parameter access (fallback)\n  bmr = parseFloat($input.params.bmr);\n  goal = ($input.params.goal || '').toLowerCase();\n  dietaryPreference = ($input.params.dietaryPreference || '').toLowerCase();\n  weight = parseFloat($input.params.weight);\n  fatPercentage = parseFloat($input.params.fatPercentage) || 0;\n} else {\n  return JSON.stringify({ error: 'No input provided' });\n}\n\n// Validate\nif (!bmr || !goal || !dietaryPreference || !weight) {\n  return JSON.stringify({ \n    error: 'Missing required parameters',\n    received: { bmr, goal, dietaryPreference, weight, fatPercentage },\n    debug: JSON.stringify($input)\n  });\n}\n\n// Calculate calorie target\nlet calorieTarget;\nif (goal.includes('loss') || goal.includes('lose')) {\n  calorieTarget = bmr * 1.2 - 500;\n} else if (goal.includes('gain')) {\n  calorieTarget = bmr * 1.5 + 500;\n} else {\n  calorieTarget = bmr * 1.4;\n}\n\n// Calculate macros\nconst proteinGrams = weight * 2;\nconst proteinCalories = proteinGrams * 4;\nconst fatCalories = calorieTarget * 0.25;\nconst fatGrams = fatCalories / 9;\nconst carbCalories = calorieTarget - proteinCalories - fatCalories;\nconst carbGrams = carbCalories / 4;\n\n// Meal plans\nconst mealPlans = {\n  vegetarian: {\n    breakfast: ['Oatmeal with banana and almonds', 'Greek yogurt with berries', 'Avocado toast with eggs'],\n    midMorning: ['Apple with peanut butter', 'Mixed nuts', 'Protein shake'],\n    lunch: ['Quinoa bowl with vegetables', 'Lentil curry with rice', 'Paneer tikka with roti'],\n    evening: ['Green tea with crackers', 'Fruit salad', 'Roasted chickpeas'],\n    dinner: ['Grilled vegetables with quinoa', 'Palak paneer with roti', 'Mixed dal with rice'],\n    postDinner: ['Warm milk', 'Herbal tea', 'Berries']\n  },\n  nonVegetarian: {\n    breakfast: ['Scrambled eggs with toast', 'Protein pancakes', 'Omelette with vegetables'],\n    midMorning: ['Boiled eggs', 'Protein shake', 'Chicken strips'],\n    lunch: ['Grilled chicken with quinoa', 'Salmon with sweet potato', 'Turkey wrap'],\n    evening: ['Tuna salad', 'Protein bar', 'Grilled chicken'],\n    dinner: ['Baked fish with vegetables', 'Grilled chicken with salad', 'Lean beef stir-fry'],\n    postDinner: ['Casein shake', 'Warm milk', 'Cottage cheese']\n  }\n};\n\nconst isVeg = dietaryPreference.includes('veg') && !dietaryPreference.includes('non');\nconst selectedPlan = isVeg ? mealPlans.vegetarian : mealPlans.nonVegetarian;\n\nconst result = {\n  calorieTarget: Math.round(calorieTarget),\n  macros: {\n    protein: Math.round(proteinGrams) + 'g',\n    carbs: Math.round(carbGrams) + 'g',\n    fats: Math.round(fatGrams) + 'g'\n  },\n  dietaryPreference: isVeg ? 'Vegetarian' : 'Non-Vegetarian',\n  dailyMealPlan: {\n    breakfast: selectedPlan.breakfast[0],\n    midMorning: selectedPlan.midMorning[0],\n    lunch: selectedPlan.lunch[0],\n    evening: selectedPlan.evening[0],\n    dinner: selectedPlan.dinner[0],\n    postDinner: selectedPlan.postDinner[0]\n  },\n  hydration: 'Drink 3-4 liters of water daily',\n  notes: `This diet provides ${Math.round(calorieTarget)} calories/day for ${goal}.`\n};\n\nreturn JSON.stringify(result);"
+      },
+      "id": "4ed3b005-3a16-40d9-b707-21afe8437ba6",
+      "name": "Diet Plan Generator Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        736,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        352,
+        560
+      ],
+      "id": "b2152868-47dc-4860-93a2-849588ef09ba",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "l3rkGTxKD6h4JqHO",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "fitness-coach",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "42cb2fe8-fd9a-49c3-af2a-990ee1037f5d",
+      "name": "Website Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "ad98e008-8a7c-41a3-8e68-d26362dd648d"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate a modern landing page HTML with embedded chat\nconst chatUrl = 'https://r12345hul.app.n8n.cloud/webhook/0a81f8d2-12fc-46bc-8a8c-b7bcf5a6f84a/chat';\n\nconst html = `\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Your Personal AI Fitness Coach</title>\n    <style>\n        * {\n            margin: 0;\n            padding: 0;\n            box-sizing: border-box;\n        }\n        \n        body {\n            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;\n            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);\n            min-height: 100vh;\n            display: flex;\n            flex-direction: column;\n        }\n        \n        .container {\n            max-width: 1200px;\n            margin: 0 auto;\n            padding: 20px;\n            width: 100%;\n        }\n        \n        .hero {\n            text-align: center;\n            padding: 60px 20px 40px;\n            color: white;\n        }\n        \n        .hero h1 {\n            font-size: 3rem;\n            font-weight: 700;\n            margin-bottom: 20px;\n            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);\n        }\n        \n        .hero p {\n            font-size: 1.3rem;\n            margin-bottom: 40px;\n            opacity: 0.95;\n        }\n        \n        .chat-section {\n            background: white;\n            border-radius: 20px;\n            box-shadow: 0 20px 60px rgba(0,0,0,0.3);\n            overflow: hidden;\n            margin: 0 auto;\n            max-width: 900px;\n        }\n        \n        .chat-header {\n            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);\n            color: white;\n            padding: 20px;\n            text-align: center;\n        }\n        \n        .chat-header h2 {\n            font-size: 1.5rem;\n            font-weight: 600;\n        }\n        \n        .chat-container {\n            height: 600px;\n            position: relative;\n        }\n        \n        .chat-iframe {\n            width: 100%;\n            height: 100%;\n            border: none;\n        }\n        \n        .features {\n            display: grid;\n            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));\n            gap: 30px;\n            padding: 40px 20px;\n            max-width: 900px;\n            margin: 0 auto;\n        }\n        \n        .feature {\n            background: rgba(255, 255, 255, 0.1);\n            backdrop-filter: blur(10px);\n            padding: 30px;\n            border-radius: 15px;\n            color: white;\n            text-align: center;\n            transition: transform 0.3s ease;\n        }\n        \n        .feature:hover {\n            transform: translateY(-5px);\n        }\n        \n        .feature-icon {\n            font-size: 3rem;\n            margin-bottom: 15px;\n        }\n        \n        .feature h3 {\n            font-size: 1.3rem;\n            margin-bottom: 10px;\n        }\n        \n        .feature p {\n            opacity: 0.9;\n            line-height: 1.6;\n        }\n        \n        @media (max-width: 768px) {\n            .hero h1 {\n                font-size: 2rem;\n            }\n            \n            .hero p {\n                font-size: 1.1rem;\n            }\n            \n            .chat-container {\n                height: 500px;\n            }\n            \n            .features {\n                grid-template-columns: 1fr;\n            }\n        }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <div class=\"hero\">\n            <h1>🏋️ Your Personal AI Fitness Coach</h1>\n            <p>Get personalized workout and diet plans tailored to your goals</p>\n        </div>\n        \n        <div class=\"chat-section\">\n            <div class=\"chat-header\">\n                <h2>💬 Start Your Fitness Journey</h2>\n            </div>\n            <div class=\"chat-container\">\n                <iframe class=\"chat-iframe\" src=\"${chatUrl}\"></iframe>\n            </div>\n        </div>\n        \n        <div class=\"features\">\n            <div class=\"feature\">\n                <div class=\"feature-icon\">📊</div>\n                <h3>BMI & BMR Analysis</h3>\n                <p>Get accurate body metrics and metabolic rate calculations</p>\n            </div>\n            <div class=\"feature\">\n                <div class=\"feature-icon\">💪</div>\n                <h3>Custom Workouts</h3>\n                <p>Personalized exercise plans for gym or home training</p>\n            </div>\n            <div class=\"feature\">\n                <div class=\"feature-icon\">🥗</div>\n                <h3>Nutrition Plans</h3>\n                <p>Tailored meal plans based on your dietary preferences</p>\n            </div>\n        </div>\n    </div>\n</body>\n</html>\n`;\n\nreturn [{ json: { html } }];"
+      },
+      "id": "324c47c1-4329-4a32-bc86-3a4c273a81be",
+      "name": "Generate Landing Page HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
+        }
+      },
+      "id": "01ce1516-9dfe-423d-8a62-c9b89c5dcc48",
+      "name": "Return Website HTML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "public": true,
+        "initialMessages": "Hi there! 👋 I'm your friendly fitness coach and nutritionist assistant. Ready to create your personalized fitness and diet plan? Let's get started!",
+        "options": {
+          "loadPreviousSession": "memory"
+        }
+      },
+      "id": "138d5102-70e6-4b05-a30a-8974afa266aa",
+      "name": "Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        336
+      ],
+      "webhookId": "0a81f8d2-12fc-46bc-8a8c-b7bcf5a6f84a"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Chat Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fitness Chatbot Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversation Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Fitness Chatbot Agent",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Chat Trigger",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BMI & BMR Calculator Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Fitness Chatbot Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exercise Plan Generator Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Fitness Chatbot Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Diet Plan Generator Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Fitness Chatbot Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Fitness Chatbot Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Website Trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate Landing Page HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Landing Page HTML": {
+      "main": [
+        [
+          {
+            "node": "Return Website HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "be293e11-ef08-43e7-9889-894fde84573c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "7c834eb6410354961f73c81fb97cefe245e0ca543d875062b444466bef576f48"
+  },
+  "id": "6OfRo9z1CQ4KqKPC",
+  "tags": []
+}
